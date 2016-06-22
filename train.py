@@ -88,6 +88,9 @@ def train_and_predict():
     model.fit(imgs_train, coeffs_train, batch_size=32, nb_epoch=20, verbose=1, shuffle=True,
               callbacks=[prog,model_checkpoint],validation_split = 0.1)
 
+    coeffs_train = model.predict(imgs_train, verbose=1)
+    np.save('coeffs_train.npy',coeffs_train)
+
     print('-'*30)
     print('Loading and preprocessing test data...')
     print('-'*30)
