@@ -4,12 +4,15 @@ import os
 import numpy as np
 
 import cv2
+from  elliptic_fourier_descriptors import elliptic_fourier_descriptors as efd
+
 
 data_path = 'raw/'
 
 image_rows = 420
 image_cols = 580
 
+degree = 2
 
 def create_train_data():
     train_data_path = os.path.join(data_path, 'train')
@@ -18,24 +21,31 @@ def create_train_data():
 
     imgs = np.ndarray((total, 1, image_rows, image_cols), dtype=np.uint8)
     imgs_mask = np.ndarray((total, 1, image_rows, image_cols), dtype=np.uint8)
-
+    coeffs = np.ndarray((total, 4*degree-3),dtype = np.float)
     i = 0
     print('-'*30)
     print('Creating training images...')
     print('-'*30)
+    
     for image_name in images:
         if 'mask' in image_name:
             continue
         image_mask_name = image_name.split('.')[0] + '_mask.tif'
         img = cv2.imread(os.path.join(train_data_path, image_name), cv2.IMREAD_GRAYSCALE)
         img_mask = cv2.imread(os.path.join(train_data_path, image_mask_name), cv2.IMREAD_GRAYSCALE)
-
+        efds,K,T = efd(img_mask,degree)
+        if efds.size:
+                efds1 = efds[0]
+                efds1 = efds1.reshape((efds1.size))
+                coeff = np.delete(efds1,[1,3,4])
+        else :
+                coeff = np.zeros(4*degree-3)
         img = np.array([img])
         img_mask = np.array([img_mask])
 
         imgs[i] = img
         imgs_mask[i] = img_mask
-
+        coeffs[i] = coeff        
         if i % 100 == 0:
             print('Done: {0}/{1} images'.format(i, total))
         i += 1
@@ -43,13 +53,15 @@ def create_train_data():
 
     np.save('imgs_train.npy', imgs)
     np.save('imgs_mask_train.npy', imgs_mask)
+    np.save('coeffs_train.npy',coeffs)
     print('Saving to .npy files done.')
 
 
 def load_train_data():
     imgs_train = np.load('imgs_train.npy')
-    imgs_mask_train = np.load('imgs_mask_train.npy')
-    return imgs_train, imgs_mask_train
+    coeffs_train = np.load('coeffs_train.npy')
+    return imgs_train, coeffs_train
+
 
 
 def create_test_data():
