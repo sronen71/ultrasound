@@ -5,7 +5,7 @@ import numpy as np
 
 import cv2
 from  elliptic_fourier_descriptors import elliptic_fourier_descriptors as efd
-
+import random
 
 data_path = 'raw/'
 
@@ -22,6 +22,7 @@ def create_train_data():
     imgs = np.ndarray((total, 1, image_rows, image_cols), dtype=np.uint8)
     imgs_mask = np.ndarray((total, 1, image_rows, image_cols), dtype=np.uint8)
     coeffs = np.ndarray((total, 4*degree-3),dtype = np.float)
+    subjects = np.ndarray(total,dtype = np.uint8)
     i = 0
     print('-'*30)
     print('Creating training images...')
@@ -31,6 +32,7 @@ def create_train_data():
         if 'mask' in image_name:
             continue
         image_mask_name = image_name.split('.')[0] + '_mask.tif'
+        subject = image_name.split('_')[0]
         img = cv2.imread(os.path.join(train_data_path, image_name), cv2.IMREAD_GRAYSCALE)
         img_mask = cv2.imread(os.path.join(train_data_path, image_mask_name), cv2.IMREAD_GRAYSCALE)
         efds,K,T = efd(img_mask,degree)
@@ -45,15 +47,30 @@ def create_train_data():
 
         imgs[i] = img
         imgs_mask[i] = img_mask
-        coeffs[i] = coeff        
+        coeffs[i] = coeff
+        subjects[i] = subject
         if i % 100 == 0:
             print('Done: {0}/{1} images'.format(i, total))
         i += 1
     print('Loading done.')
+    unique_subjects= np.unique(subjects).tolist()
+    random.seed(1)
+    random.shuffle(unique_subjects)
+    validate_fraction = 0.1
+    nt = int(len(unique_subjects)*(1-validate_fraction))
+    print("validation subjects",unique_subjects[nt:])
+    train_index = [i for i,x in enumerate(subjects.tolist()) if x in unique_subjects[:nt]]
+    valid_index = [i for i,x in enumerate(subjects.tolist()) if x in unique_subjects[nt:]]        
+    train_index = np.array(train_index)
+    valid_index = np.array(valid_index)
+    np.save('imgs_train.npy', imgs[train_index,...])
+    np.save('imgs_mask_train.npy', imgs_mask[train_index,...])
+    np.save('coeffs_train.npy',coeffs[train_index,...])
+    np.save('imgs_valid.npy', imgs[valid_index,...])
+    np.save('imgs_mask_valid.npy', imgs_mask[valid_index,...])
+    np.save('coeffs_valid.npy',coeffs[valid_index,...])
 
-    np.save('imgs_train.npy', imgs)
-    np.save('imgs_mask_train.npy', imgs_mask)
-    np.save('coeffs_train.npy',coeffs)
+
     print('Saving to .npy files done.')
 
 
