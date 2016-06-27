@@ -108,16 +108,16 @@ def resnet(rows,cols):
     # Build residual blocks..
     # reps 3,4,6,3
     block_fn = _bottleneck
-    block1 = _residual_block(block_fn, nb_filters=64, repetations=2, is_first_layer=True)(pool1)
-    block2 = _residual_block(block_fn, nb_filters=64, repetations=2)(block1)
-    block3 = _residual_block(block_fn, nb_filters=128, repetations=2)(block2)
-    block4 = _residual_block(block_fn, nb_filters=256, repetations=2)(block3)
+    block1 = _residual_block(block_fn, nb_filters=64, repetations=3, is_first_layer=True)(pool1)
+    block2 = _residual_block(block_fn, nb_filters=64, repetations=4)(block1)
+    block3 = _residual_block(block_fn, nb_filters=128, repetations=6)(block2)
+    block4 = _residual_block(block_fn, nb_filters=256, repetations=3)(block3)
 
     # Regression block
     # pool_size 7,7
-    #pool2 = AveragePooling2D(pool_size=(3, 3), strides=(1, 1), border_mode="same")(block4)
-    #flatten1 = Flatten()(pool2)
-    flatten1 = Flatten()(block4)
+    pool2 = AveragePooling2D(pool_size=(7, 7), strides=(1, 1), border_mode="same")(block4)
+    flatten1 = Flatten()(pool2)
+    #flatten1 = Flatten()(block4)
     dense = Dense(output_dim=2, init="he_normal", activation="relu")(flatten1)
 
     model = Model(input=input, output=dense)

@@ -15,8 +15,8 @@ from elliptic_fourier_descriptors import reconstruct
 #img_rows = 224
 #img_cols = 224
 
-img_rows = 64
-img_cols = 64
+img_rows = 85
+img_cols = 116
 
 org_rows = 420
 org_cols = 580
