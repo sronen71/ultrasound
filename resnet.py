@@ -8,6 +8,7 @@ from keras.layers import (
     Dense,
     Flatten
 )
+from keras.layers import advanced_activations as advact
 from keras.layers.convolutional import (
     Convolution2D,
     MaxPooling2D,

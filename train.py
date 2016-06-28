@@ -8,15 +8,15 @@ from keras.optimizers import Adam
 from keras.callbacks import ModelCheckpoint, LearningRateScheduler,ProgbarLogger
 from keras import backend as K
 
-from data import load_train_data, load_test_data
+from data import load_train_data, load_test_data, load_valid_data
 from resnet import resnet
 from elliptic_fourier_descriptors import reconstruct
 
 #img_rows = 224
 #img_cols = 224
 
-img_rows = 85
-img_cols = 116
+img_rows = 128
+img_cols = 128
 
 org_rows = 420
 org_cols = 580
@@ -56,6 +56,7 @@ def train_and_predict():
 
     imgs_train, coeffs_train = load_train_data()
     masked = np.ma.masked_values(coeffs_train[:,0],0.0)
+
     
     imgs_train = imgs_train[~masked.mask,...]
     coeffs_train = coeffs_train[~masked.mask,...]
@@ -68,7 +69,6 @@ def train_and_predict():
 
     imgs_train -= mean
     imgs_train /= std
-    
     coeffs_train = coeffs_train[:,0:2]
     coeffs_train = coeffs_train.astype('float32')
 
@@ -85,11 +85,36 @@ def train_and_predict():
     print('-'*30)
     #print (coeffs_train)
     prog = ProgbarLogger()
-    model.fit(imgs_train, coeffs_train, batch_size=32, nb_epoch=20, verbose=1, shuffle=True,
+    model.fit(imgs_train, coeffs_train, batch_size=32, nb_epoch=40, verbose=1, shuffle=True,
               callbacks=[prog,model_checkpoint],validation_split = 0.1)
 
     coeffs_train = model.predict(imgs_train, verbose=1)
-    np.save('coeffs_train.npy',coeffs_train)
+    np.save('coeffs_train_predicted.npy',coeffs_train)
+
+    print('-'*30)
+    print('Loading and preprocessing valid data...')
+    print('-'*30)
+    imgs_valid, coeffs_valid = load_valid_data()
+    imgs_valid = preprocess(imgs_valid)
+
+    imgs_valid = imgs_valid.astype('float32')
+    imgs_valid -= mean
+    imgs_valid /= std
+
+    print('-'*30)
+    print('Loading saved weights...')
+    print('-'*30)
+    model.load_weights('resnet.hdf5')
+
+    print('-'*30)
+    print('Predicting  on valid data...')
+    print('-'*30)
+    coeffs_valid_predicted = model.predict(imgs_valid, verbose=1)
+    np.save('coeffs_valid_predicted.npy', coeffs_valid_predicted)
+
+
+
+
 
     print('-'*30)
     print('Loading and preprocessing test data...')
@@ -104,7 +129,7 @@ def train_and_predict():
     print('-'*30)
     print('Loading saved weights...')
     print('-'*30)
-    model.load_weights('unet.hdf5')
+    model.load_weights('resnet.hdf5')
 
     print('-'*30)
     print('Predicting  on test data...')
