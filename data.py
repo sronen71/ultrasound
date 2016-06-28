@@ -65,6 +65,7 @@ def create_train_data():
     valid_index = np.array(valid_index)
     np.save('imgs_train.npy', imgs[train_index,...])
     np.save('imgs_mask_train.npy', imgs_mask[train_index,...])
+    print(coeffs.shape,train_index.shape,coeffs[train_index,...].shape) 	
     np.save('coeffs_train.npy',coeffs[train_index,...])
     np.save('imgs_valid.npy', imgs[valid_index,...])
     np.save('imgs_mask_valid.npy', imgs_mask[valid_index,...])
@@ -79,6 +80,11 @@ def load_train_data():
     coeffs_train = np.load('coeffs_train.npy')
     return imgs_train, coeffs_train
 
+
+def load_valid_data():
+    imgs_valid = np.load('imgs_valid.npy')
+    coeffs_valid = np.load('coeffs_valid.npy')
+    return imgs_valid, coeffs_valid
 
 
 def create_test_data():
