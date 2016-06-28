@@ -85,8 +85,8 @@ def train_and_predict():
     print('-'*30)
     #print (coeffs_train)
     prog = ProgbarLogger()
-    model.fit(imgs_train, coeffs_train, batch_size=32, nb_epoch=40, verbose=1, shuffle=True,
-              callbacks=[prog,model_checkpoint],validation_split = 0.1)
+    model.fit(imgs_train, coeffs_train, batch_size=64, nb_epoch=20, verbose=1, shuffle=True,
+              callbacks=[prog,model_checkpoint],validation_split = 0.2)
 
     coeffs_train = model.predict(imgs_train, verbose=1)
     np.save('coeffs_train_predicted.npy',coeffs_train)
@@ -137,6 +137,12 @@ def train_and_predict():
     coeffs_test = model.predict(imgs_test, verbose=1)
     np.save('coeffs_test.npy', coeffs_test)
 
+    dif = coeffs_valid[:,0:2] - coeffs_valid_predicted
+    print(dif.shape)
+    dif = dif[coeffs_valid[:,0]>0,:]
+    print(dif.shape)	
+    check = np.mean(np.sum(dif*dif,axis=1))
+    print('check',check)	
 
 if __name__ == '__main__':
     train_and_predict()

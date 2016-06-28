@@ -138,7 +138,7 @@ def main():
     print "{} s to get output".format(duration)
 
     start = time.time()
-    model.compile(loss="categorical_crossentropy", optimizer="sgd")
+    model.compile(loss="mean_squared_error", optimizer="sgd")
     duration = time.time() - start
     print "{} s to get compile".format(duration)
 
