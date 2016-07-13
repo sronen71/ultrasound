@@ -32,9 +32,15 @@ def create_train_data():
         if 'mask' in image_name:
             continue
         image_mask_name = image_name.split('.')[0] + '_mask.tif'
+	image_mask_write = image_name.split('.')[0] + '_mask1.tif'
         subject = image_name.split('_')[0]
         img = cv2.imread(os.path.join(train_data_path, image_name), cv2.IMREAD_GRAYSCALE)
-        img_mask = cv2.imread(os.path.join(train_data_path, image_mask_name), cv2.IMREAD_GRAYSCALE)
+        img_mask = cv2.imread(os.path.join(train_data_path, image_mask_write), cv2.IMREAD_GRAYSCALE)
+        print(np.max(img_mask)) 
+	
+	img_mask[img_mask==255] = 1
+        print(img_mask[img_mask>0]) 
+	cv2.imwrite(os.path.join(train_data_path,image_mask_write),img_mask)	
         efds,K,T = efd(img_mask,degree)
         if efds.size:
                 efds1 = efds[0]

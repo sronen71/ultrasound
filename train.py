@@ -117,6 +117,31 @@ def train_and_predict():
 
 
     print('-'*30)
+    print('Loading and preprocessing valid data...')
+    print('-'*30)
+    imgs_valid, coeffs_valid = load_valid_data()
+    imgs_valid = preprocess(imgs_valid)
+
+    imgs_valid = imgs_valid.astype('float32')
+    imgs_valid -= mean
+    imgs_valid /= std
+
+    print('-'*30)
+    print('Loading saved weights...')
+    print('-'*30)
+    model.load_weights('unet.hdf5')
+
+    print('-'*30)
+    print('Predicting  on valid data...')
+    print('-'*30)
+    coeffs_valid_predicted = model.predict(imgs_valid, verbose=1)
+    np.save('coeffs_valid_predicted.npy', coeffs_valid_predicted)
+
+
+
+
+
+    print('-'*30)
     print('Loading and preprocessing test data...')
     print('-'*30)
     imgs_test, imgs_id_test = load_test_data()
