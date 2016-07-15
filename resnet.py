@@ -1,152 +1,191 @@
-import os
-
-from keras.models import Model
-from keras.layers import (
-    Input,
-    Activation,
-    merge,
-    Dense,
-    Flatten
-)
-from keras.layers import advanced_activations as advact
-from keras.layers.convolutional import (
-    Convolution2D,
-    MaxPooling2D,
-    AveragePooling2D
-)
-from keras.layers.normalization import BatchNormalization
-from keras.utils.visualize_util import plot
+import caffe
+from caffe import layers as L
+from caffe import params as P
 
 
-# Helper to build a conv -> BN -> relu block
-def _conv_bn_relu(nb_filter, nb_row, nb_col, subsample=(1, 1)):
-    def f(input):
-        conv = Convolution2D(nb_filter=nb_filter, nb_row=nb_row, nb_col=nb_col, subsample=subsample,
-                             init="he_normal", border_mode="same")(input)
-        norm = BatchNormalization(mode=0, axis=1)(conv)
-        return Activation("relu")(norm)
+def conv_bn_scale_relu(bottom, num_output=64, kernel_size=3, stride=1, pad=0,dilation=1,use_gbs=False):
+    conv = L.Convolution(bottom, num_output=num_output, kernel_size=kernel_size, stride=stride, pad=pad,
+			 dilation=dilation,	
+                         param=[dict(lr_mult=1, decay_mult=1)],
+                         weight_filler=dict(type='msra', std=0.01),bias_term=False)
+    conv_bn = L.BatchNorm(conv,use_global_stats=use_gbs, in_place=True,param=[dict(lr_mult=0),dict(lr_mult=0),dict(lr_mult=0)])
+    conv_scale = L.Scale(conv, scale_param=dict(bias_term=True), in_place=True)
+    conv_relu = L.ReLU(conv, in_place=True)
 
-    return f
-
-
-# Helper to build a BN -> relu -> conv block
-# This is an improved scheme proposed in http://arxiv.org/pdf/1603.05027v2.pdf
-def _bn_relu_conv(nb_filter, nb_row, nb_col, subsample=(1, 1)):
-    def f(input):
-        norm = BatchNormalization(mode=0, axis=1)(input)
-        activation = Activation("relu")(norm)
-        return Convolution2D(nb_filter=nb_filter, nb_row=nb_row, nb_col=nb_col, subsample=subsample,
-                             init="he_normal", border_mode="same")(activation)
-
-    return f
+    return conv, conv_bn, conv_scale, conv_relu
 
 
-# Bottleneck architecture for > 34 layer resnet.
-# Follows improved proposed scheme in http://arxiv.org/pdf/1603.05027v2.pdf
-# Returns a final conv layer of nb_filters * 4
-def _bottleneck(nb_filters, init_subsample=(1, 1)):
-    def f(input):
-        conv_1_1 = _bn_relu_conv(nb_filters, 1, 1, subsample=init_subsample)(input)
-        conv_3_3 = _bn_relu_conv(nb_filters, 3, 3)(conv_1_1)
-        residual = _bn_relu_conv(nb_filters * 4, 1, 1)(conv_3_3)
-        return _shortcut(input, residual)
+def conv_bn_scale(bottom, num_output=64, kernel_size=3, stride=1, pad=0,dilation=1,use_gbs=False):
+    conv = L.Convolution(bottom, num_output=num_output, kernel_size=kernel_size, stride=stride, pad=pad,
+                         dilation=dilation,param=[dict(lr_mult=1, decay_mult=1)],
+                         weight_filler=dict(type='msra', std=0.01),
+                         bias_term=False)
+    conv_bn = L.BatchNorm(conv, use_global_stats=use_gbs, in_place=True,
+	param=[dict(lr_mult=0),dict(lr_mult=0),dict(lr_mult=0)])
+    conv_scale = L.Scale(conv, scale_param=dict(bias_term=True), in_place=True)
 
-    return f
-
-
-# Basic 3 X 3 convolution blocks.
-# Use for resnet with layers <= 34
-# Follows improved proposed scheme in http://arxiv.org/pdf/1603.05027v2.pdf
-def _basic_block(nb_filters, init_subsample=(1, 1)):
-    def f(input):
-        conv1 = _bn_relu_conv(nb_filters, 3, 3, subsample=init_subsample)(input)
-        residual = _bn_relu_conv(nb_filters, 3, 3)(conv1)
-        return _shortcut(input, residual)
-
-    return f
+    return conv, conv_bn, conv_scale
 
 
-# Adds a shortcut between input and residual block and merges them with "sum"
-def _shortcut(input, residual):
-    # Expand channels of shortcut to match residual.
-    # Stride appropriately to match residual (width, height)
-    # Should be int if network architecture is correctly configured.
-    stride_width = input._keras_shape[2] / residual._keras_shape[2]
-    stride_height = input._keras_shape[3] / residual._keras_shape[3]
-    equal_channels = residual._keras_shape[1] == input._keras_shape[1]
+def eltwize_relu(bottom1, bottom2):
+    residual_eltwise = L.Eltwise(bottom1, bottom2, eltwise_param=dict(operation=1))
+    residual_eltwise_relu = L.ReLU(residual_eltwise, in_place=True)
 
-    shortcut = input
-    # 1 X 1 conv if shape is different. Else identity.
-    if stride_width > 1 or stride_height > 1 or not equal_channels:
-        shortcut = Convolution2D(nb_filter=residual._keras_shape[1], nb_row=1, nb_col=1,
-                                 subsample=(stride_width, stride_height),
-                                 init="he_normal", border_mode="valid")(input)
-
-    return merge([shortcut, residual], mode="sum")
+    return residual_eltwise, residual_eltwise_relu
 
 
-# Builds a residual block with repeating bottleneck blocks.
-def _residual_block(block_function, nb_filters, repetations, is_first_layer=False):
-    def f(input):
-        for i in range(repetations):
-            init_subsample = (1, 1)
-            if i == 0 and not is_first_layer:
-                init_subsample = (2, 2)
-            input = block_function(nb_filters=nb_filters, init_subsample=init_subsample)(input)
-        return input
+def residual_branch(bottom, base_output=64,dilation=1,use_gbs=False):
+    """
+    input:4*base_output x n x n
+    output:4*base_output x n x n
+    :param base_output: base num_output of branch2
+    :param bottom: bottom layer
+    :return: layers
+    """
+    branch2a, branch2a_bn, branch2a_scale, branch2a_relu = \
+        conv_bn_scale_relu(bottom, num_output=base_output, kernel_size=1,use_gbs=use_gbs)  # base_output x n x n
+    branch2b, branch2b_bn, branch2b_scale, branch2b_relu = \
+        conv_bn_scale_relu(branch2a, num_output=base_output, kernel_size=3, pad=dilation,dilation=dilation,
+		use_gbs=use_gbs)  # base_output x n x n
+    branch2c, branch2c_bn, branch2c_scale = \
+        conv_bn_scale(branch2b, num_output=4 * base_output, kernel_size=1,use_gbs=use_gbs)  # 4*base_output x n x n
 
-    return f
+    residual, residual_relu = \
+        eltwize_relu(bottom, branch2c)  # 4*base_output x n x n
 
-
-# http://arxiv.org/pdf/1512.03385v1.pdf
-# 50 Layer resnet
-def resnet(rows,cols):
-    input = Input(shape=(1, rows, cols))
-
-    conv1 = _conv_bn_relu(nb_filter=64, nb_row=7, nb_col=7, subsample=(2, 2))(input)
-    pool1 = MaxPooling2D(pool_size=(3, 3), strides=(2, 2), border_mode="same")(conv1)
-
-    # Build residual blocks..
-    # reps 3,4,6,3
-    block_fn = _bottleneck
-    block1 = _residual_block(block_fn, nb_filters=64, repetations=3, is_first_layer=True)(pool1)
-    block2 = _residual_block(block_fn, nb_filters=64, repetations=4)(block1)
-    block3 = _residual_block(block_fn, nb_filters=128, repetations=6)(block2)
-    block4 = _residual_block(block_fn, nb_filters=256, repetations=3)(block3)
-
-    # Regression block
-    # pool_size 7,7
-    pool2 = AveragePooling2D(pool_size=(7, 7), strides=(1, 1), border_mode="same")(block4)
-    flatten1 = Flatten()(pool2)
-    #flatten1 = Flatten()(block4)
-    dense = Dense(output_dim=2, init="he_normal", activation="relu")(flatten1)
-
-    model = Model(input=input, output=dense)
-    return model
+    return branch2a, branch2a_bn, branch2a_scale, branch2a_relu, branch2b, branch2b_bn, branch2b_scale, branch2b_relu, \
+           branch2c, branch2c_bn, branch2c_scale, residual, residual_relu
 
 
-def main():
-    import time
-    start = time.time()
-    model = resnet()
-    duration = time.time() - start
-    print "{} s to make model".format(duration)
+def residual_branch_shortcut(bottom, stride=2, base_output=64,dilation=1,use_gbs=False):
+    """
 
-    start = time.time()
-    model.output
-    duration = time.time() - start
-    print "{} s to get output".format(duration)
+    :param stride: stride
+    :param base_output: base num_output of branch2
+    :param bottom: bottom layer
+    :return: layers
+    """
+    branch1, branch1_bn, branch1_scale = \
+        conv_bn_scale(bottom, num_output=4 * base_output, kernel_size=1, stride=stride)
 
-    start = time.time()
-    model.compile(loss="mean_squared_error", optimizer="sgd")
-    duration = time.time() - start
-    print "{} s to get compile".format(duration)
+    branch2a, branch2a_bn, branch2a_scale, branch2a_relu = \
+        conv_bn_scale_relu(bottom, num_output=base_output, kernel_size=1, stride=stride,use_gbs=use_gbs)
+    branch2b, branch2b_bn, branch2b_scale, branch2b_relu = \
+        conv_bn_scale_relu(branch2a, num_output=base_output, kernel_size=3, pad=dilation,dilation=dilation,
+		use_gbs=use_gbs)
+    branch2c, branch2c_bn, branch2c_scale = \
+        conv_bn_scale(branch2b, num_output=4 * base_output, kernel_size=1,use_gbs=use_gbs)
 
-    current_dir = os.path.dirname(os.path.realpath(__file__))
-    model_path = os.path.join(current_dir, "resnet_50.png")
-    plot(model, to_file=model_path, show_shapes=True)
+    residual, residual_relu = \
+        eltwize_relu(branch1, branch2c)  # 4*base_output x n x n
+
+    return branch1, branch1_bn, branch1_scale, branch2a, branch2a_bn, branch2a_scale, branch2a_relu, branch2b, \
+           branch2b_bn, branch2b_scale, branch2b_relu, branch2c, branch2c_bn, branch2c_scale, residual, residual_relu
 
 
-if __name__ == '__main__':
-    main()
+branch_shortcut_string = 'n.res(stage)a_branch1, n.res(stage)a_branch1_bn, n.res(stage)a_branch1_scale, \
+        n.res(stage)a_branch2a, n.res(stage)a_branch2a_bn, n.res(stage)a_branch2a_scale, n.res(stage)a_branch2a_relu, \
+        n.res(stage)a_branch2b, n.res(stage)a_branch2b_bn, n.res(stage)a_branch2b_scale, n.res(stage)a_branch2b_relu, \
+        n.res(stage)a_branch2c, n.res(stage)a_branch2c_bn, n.res(stage)a_branch2c_scale, n.res(stage)a, n.res(stage)a_relu = \
+            residual_branch_shortcut((bottom), stride=(stride), base_output=(num),use_gbs=(use_gbs),dilation=(dilation))'
 
+branch_string = 'n.res(stage)b(order)_branch2a, n.res(stage)b(order)_branch2a_bn, n.res(stage)b(order)_branch2a_scale, \
+        n.res(stage)b(order)_branch2a_relu, n.res(stage)b(order)_branch2b, n.res(stage)b(order)_branch2b_bn, \
+        n.res(stage)b(order)_branch2b_scale, n.res(stage)b(order)_branch2b_relu, n.res(stage)b(order)_branch2c, \
+        n.res(stage)b(order)_branch2c_bn, n.res(stage)b(order)_branch2c_scale, n.res(stage)b(order), n.res(stage)b(order)_relu = \
+            residual_branch((bottom), base_output=(num),use_gbs=(use_gbs),dilation=(dilation))'
+def classifier(bottom,dilation=6,classifier_num=2): 
+	return L.Convolution(bottom, 
+	      param=[dict(lr_mult=1, decay_mult=1), dict(lr_mult=2, decay_mult=0)],
+	      convolution_param=dict(num_output=classifier_num,
+	      kernel_size=3,pad=dilation,dilation=dilation,weight_filler=
+	      dict(type="gaussian",std=0.01),	
+	      bias_filler=dict(type='constant', value=0)))
+
+
+def classifier_whole(bottom,classifier_num=2): 
+	return L.InnerProduct(bottom, 
+	      param=[dict(lr_mult=1, decay_mult=1), dict(lr_mult=2, decay_mult=0)],
+	      inner_product_param=dict(num_output=classifier_num,
+	      weight_filler=
+	      dict(type="gaussian",std=0.01),	
+	      bias_filler=dict(type='constant', value=0)))
+
+
+class ResNet(object):
+    def __init__(self,num_output=2):
+        self.train_data = "/home/ubuntu/exper/voc12/list/train.txt"
+        self.test_data = "/home/ubuntu/exper/voc12/list/val.txt"
+        self.classifier_num = num_output
+	self.new_height = 90
+	self.new_width = 90
+	self.crop = 81
+    def resnet_layers_proto(self, batch_size, phase='TRAIN', stages=(3, 3, 3, 3),num_base=64): #3,4,6,3
+        """
+
+        :param batch_size: the batch_size of train and test phase
+        :param phase: TRAIN or TEST
+        :param stages: the num of layers = 2 + 3*sum(stages), layers would better be chosen from [50, 101, 152]
+                       {every stage is composed of 1 residual_branch_shortcut module and stage[i]-1 residual_branch
+                       modules, each module consists of 3 conv layers}
+                        (3, 4, 6, 3) for 50 layers; (3, 4, 23, 3) for 101 layers; (3, 8, 36, 3) for 152 layers
+        """
+        n = caffe.NetSpec()
+        if phase == 'TRAIN':
+            source_data = self.train_data
+            mirror = False
+	    use_gbs = False	
+        else:
+            source_data = self.test_data
+            mirror = False
+            use_gbs = True
+        n.data, n.label = L.ImageSegData(ntop=2,
+                             	image_data_param= dict(source=source_data,batch_size=batch_size,
+				is_color=False,new_height=self.new_height,new_width=self.new_width,
+				root_folder="/home/ubuntu/ultrasound/raw/train",
+				label_type=P.ImageData.PIXEL,shuffle=True),
+				transform_param=dict(crop_size=self.crop, mirror=mirror)) # mean_value=[100]
+
+        n.conv1, n.conv1_bn, n.conv1_scale, n.conv1_relu = \
+            conv_bn_scale_relu(n.data, num_output=num_base, kernel_size=7, stride=2, pad=3)  # 64x112x112
+        n.pool1 = L.Pooling(n.conv1, kernel_size=3, stride=2, pad=1,pool=P.Pooling.MAX)  
+
+        for num in xrange(len(stages)):  # num = 0, 1, 2, 3
+            for i in xrange(stages[num]):
+                if i == 0:
+                    stage_string = branch_shortcut_string
+                    bottom_string = ['n.pool1', 'n.res2b%s' % str(stages[0] - 1), 'n.res3b%s' % str(stages[1] - 1),
+                                     'n.res4b%s' % str(stages[2] - 1)][num]
+                else:
+                    stage_string = branch_string
+                    if i == 1:
+                        bottom_string = 'n.res%sa' % str(num + 2)
+                    else:
+                        bottom_string = 'n.res%sb%s' % (str(num + 2), str(i - 1))
+		stride = 1
+		dilation = 1
+		if num == 1:
+			stride = 2
+		if num>1:
+			#dilation = (num-1)*2
+			dilation = 1
+                exec (stage_string.replace('(stage)', str(num + 2)).replace('(bottom)', bottom_string).
+                      replace('(num)', str(2 ** num * num_base)).replace('(order)', str(i)).
+                      replace('(stride)', str(stride)).replace('(dilation)',str(dilation)))
+	
+	exec 'n.avg_pool = L.Pooling((bottom), kernel_size=11, stride=11, pad=0,pool=P.Pooling.AVE)'.\
+		replace('(bottom)', 'n.res5b%s' % str(stages[3] - 1))
+	n.classifier_whole = classifier_whole(n.avg_pool)
+	n.label_binary = L.Pooling(n.label, kernel_size=self.crop,stride=self.crop, pad=0,pool=P.Pooling.MAX)  # 64x56x56
+	n.label_whole =L.Flatten(n.label_binary)
+	n.loss = L.SoftmaxWithLoss(n.classifier_whole, n.label_whole,loss_param=dict(ignore_label=255))	
+	n.accuracy = L.Accuracy(n.classifier_whole,n.label_whole,accuracy_param=dict(ignore_label=255))	
+ 	
+        #exec 'n.classifier = classifier((bottom), dilation=6)'.\
+        #    replace('(bottom)', 'n.res5b%s' % str(stages[3] - 1))
+	#n.label_shrink=L.Interp(n.label,interp_param=dict(shrink_factor=8,pad_beg=0,pad_end=0))
+        #n.loss = L.SoftmaxWithLoss(n.classifier, n.label_shrink,loss_param=dict(ignore_label=255))
+        #n.accuracy = L.SegAccuracy(n.classifier, n.label_shrink,
+        #                                 seg_accuracy_param=dict(ignore_label=255))
+
+        return n.to_proto()

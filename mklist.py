@@ -26,14 +26,17 @@ def create_train_list():
             continue
         image_mask_name = image_name.split('.')[0] + '_mask1.tif'
         img_mask = cv2.imread(os.path.join(train_data_path, image_mask_name), cv2.IMREAD_GRAYSCALE)
-        total = cv2.sumElems(img_mask)
-	if total[0] == 0.0 :
-		continue
+        #total = cv2.sumElems(img_mask)
+	#if total[0] == 0.0 :
+	#	continue
         subject = image_name.split('_')[0]
         img_id = image_name.split('.')[0]
 
         imgs_ids.append([img_id])
+
+	image_name = image_mask_name
         imgs.append(('/'+image_name,'/'+image_mask_name))
+	
         subjects.append(subject)
     unique_subjects= list(set(subjects))
     random.seed(1)

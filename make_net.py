@@ -10,7 +10,7 @@ def save_proto(proto, prototxt):
 if __name__ == '__main__':
     model = resnet.ResNet()
     num_base = 32
-    num_batch = 16
+    num_batch = 64
     train_proto = model.resnet_layers_proto(num_batch,num_base=num_base)
     test_proto = model.resnet_layers_proto(num_batch,num_base=num_base,phase='TEST')
 
